@@ -1,16 +1,31 @@
-# Untitled - By: justin - Fri Mar 10 2023
+# hacking prototype - By: justin - Fri Mar 10 2023
 
 import sensor
 import time
 import mjpeg
-import image
-from pyb import UART
+from pyb import UART, Pin
+from time import sleep
 
 
 class uart_handler():
 
     def __init__(self):
-        self.uart = UART(3, 155200, timeout=5000, timeout_char=1000)
+        self.uart = None
+        self.reset = None
+
+    def send_photo(self, photo):
+        pass
+
+    def init(self):
+        self.uart = UART(3, 155200, timemout=5000, timeout_char=1000)
+        self.reset = Pin("P7", Pin.OUT_OD, Pin.PULL_NONE)
+        self.reset.low()
+        sleep(100)
+        self.reset.high()
+        sleep(100)
+        self.uart.write("start up\r\n")
+        sleep(1000)
+        self.uart.readall()  # clear
 
     def send(self, data):
         self.uart.write(data)
