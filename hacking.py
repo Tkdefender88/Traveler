@@ -16,6 +16,12 @@ class uart_handler():
     def send_photo(self, photo):
         pass
 
+    def command(self):
+        if (self.uart.any()):
+            return self.uart.readline()
+        else:
+            return ""
+
     def init(self):
         self.uart = UART(3, 155200, timemout=5000, timeout_char=1000)
         self.reset = Pin("P7", Pin.OUT_OD, Pin.PULL_NONE)
@@ -57,11 +63,14 @@ sensor.snapshot().save("small.jpg")
 big.close(1)
 print("DONE!!")
 
+uart = uart_handler()
+uart.init()
+
 # Main LOOP WOOOOOO
-'''
 while (True):
+    # wait for uart command
+    uart.command()
+
     clock.tick()
     frame = sensor.snapshot()
-    m.add_frame(frame)
     print(clock.fps())
-'''
