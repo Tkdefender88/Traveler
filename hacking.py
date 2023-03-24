@@ -13,6 +13,12 @@ class uart_handler():
     def send_photo(self, photo):
         pass
 
+    def command(self):
+        if (self.uart.any()):
+            return self.uart.readline()
+        else:
+            return ""
+
     def init(self):
         self.uart = UART(3, 115200, timeout=5000, timeout_char=1000)
         self.uart.write("start up\n")
@@ -39,9 +45,6 @@ class protocol():
 
     def __process(cmd):
         pass
-        
-
-
 
 
 def init_board():
@@ -61,6 +64,9 @@ serial = uart_handler()
 serial.init()
 
 init_board()
+
+uart = uart_handler()
+uart.init()
 
 # Main LOOP WOOOOOO
 while (True):
