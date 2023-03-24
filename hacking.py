@@ -2,33 +2,46 @@
 
 import sensor
 import time
-import mjpeg
-from pyb import UART, Pin
-from time import sleep
+from pyb import UART
 
 
 class uart_handler():
 
     def __init__(self):
         self.uart = None
-        self.reset = None
 
     def send_photo(self, photo):
         pass
 
     def init(self):
-        self.uart = UART(3, 155200, timemout=5000, timeout_char=1000)
-        self.reset = Pin("P7", Pin.OUT_OD, Pin.PULL_NONE)
-        self.reset.low()
-        sleep(100)
-        self.reset.high()
-        sleep(100)
-        self.uart.write("start up\r\n")
-        sleep(1000)
-        self.uart.readall()  # clear
+        self.uart = UART(3, 115200, timeout=5000, timeout_char=1000)
+        self.uart.write("start up\n")
+        self.uart.readline()  # clear
 
     def send(self, data):
         self.uart.write(data)
+
+    def read_line(self):
+        if self.uart.any():
+            return self.uart.readline()
+        else:
+            return None
+
+
+class protocol():
+    def __init__(self):
+        pass
+
+    def command(self, cmd):
+        if cmd[0] != 0x56: raise OSError("command corrupted")
+        if cmd[1] != 0x00: raise OSError("command corrupted")
+        protocol.__process(cmd[2:])
+
+    def __process(cmd):
+        pass
+        
+
+
 
 
 def init_board():
@@ -38,30 +51,22 @@ def init_board():
     sensor.skip_frames(time=2000)
 
 
-init_board()
-
-big = mjpeg.Mjpeg("lolygags.mjpeg")
 clock = time.clock()
 
 # 1. UART Read -- wait for signal to take snapshot
 # 2. Take snapshot -- write it to the mjpeg on the SD card
 # 3. Downscale the image -- write it over serial bus
 
-frame = sensor.snapshot()
+serial = uart_handler()
+serial.init()
 
-big.add_frame(frame)
-
-sensor.alloc_extra_fb(640, 480, frame.format()).save("smallboi.jpg")
-sensor.snapshot().save("small.jpg")
-
-big.close(1)
-print("DONE!!")
+init_board()
 
 # Main LOOP WOOOOOO
-'''
 while (True):
-    clock.tick()
-    frame = sensor.snapshot()
-    m.add_frame(frame)
-    print(clock.fps())
-'''
+    data = serial.read_line()
+    if (data is not None):
+        frame = sensor.snapshot()
+        serial.send("pic\r\n")
+
+print("DONE!!")
