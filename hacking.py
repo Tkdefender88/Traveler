@@ -2,6 +2,8 @@
 
 import sensor
 import time
+import ustruct
+import mjpeg
 from pyb import UART
 
 
@@ -10,19 +12,10 @@ class uart_handler():
     def __init__(self):
         self.uart = None
 
-    def send_photo(self, photo):
-        pass
-
-    def command(self):
-        if (self.uart.any()):
-            return self.uart.readline()
-        else:
-            return ""
-
     def init(self):
         self.uart = UART(3, 115200, timeout=5000, timeout_char=1000)
         self.uart.write("start up\n")
-        self.uart.readline()  # clear
+        time.sleep_ms(80)
 
     def send(self, data):
         self.uart.write(data)
@@ -34,17 +27,51 @@ class uart_handler():
             return None
 
 
-class protocol():
+class Protocol():
+    RESET = 0
+    CAPTURE = 1
+    READ_DATA_LENGTH = 2
+    READ_DATA_IMAGE = 3
+    STOP = 4
+
     def __init__(self):
-        pass
+        self.uart = uart_handler()
+        self.uart.init()
 
-    def command(self, cmd):
-        if cmd[0] != 0x56: raise OSError("command corrupted")
-        if cmd[1] != 0x00: raise OSError("command corrupted")
-        protocol.__process(cmd[2:])
+    def send(self, image):
+        self.uart.send(image)
 
-    def __process(cmd):
-        pass
+    def command(self):
+        cmd = self.uart.read_line()
+        if cmd is not None:
+            if cmd[0] != 0x56:
+                raise OSError("command corrupted")
+            if cmd[1] != 0x00:
+                raise OSError("command corrupted")
+            return self.process_cmd(cmd[2:])
+
+    def process_cmd(self, cmd):
+        if cmd[0] == 0x36 and cmd[1] == 0x01:
+            return self.cmd_image(cmd[2:])
+        if cmd[0] == 0x26 and cmd[1] == 0x00:
+            self.uart.send(
+                ustruct.pack("<bbbb", 0x76, 0x00, 0x26, 0x00)
+            )
+            return (Protocol.RESET)
+        raise OSError("command corrupted")
+
+    def cmd_image(self, cmd):
+        if cmd[0] == 0x00:
+            self.uart.send(
+                ustruct.pack("<bbbbb", 0x76, 0x00, 0x36, 0x00, 0x00)
+            )
+            return (Protocol.CAPTURE)
+        if cmd[0] == 0x03:
+            self.uart.send(
+                ustruct.pack("<bbbbb", 0x76, 0x00, 0x36, 0x00, 0x00)
+            )
+            return (Protocol.STOP)
+        raise OSError("command corrupted")
 
 
 def init_board():
@@ -54,25 +81,38 @@ def init_board():
     sensor.skip_frames(time=2000)
 
 
+def save_image():
+    frame = sensor.snapshot()
+    print(m.width())
+    m.add_frame(frame)
+    frame.scale(x_size=640, y_size=480)
+    return frame
+
+
+init_board()
 clock = time.clock()
+m = mjpeg.Mjpeg("movie.mjpeg")
 
 # 1. UART Read -- wait for signal to take snapshot
 # 2. Take snapshot -- write it to the mjpeg on the SD card
-# 3. Downscale the image -- write it over serial bus
+# 3. Downscale the image
+# 4. write it over serial bus
 
-serial = uart_handler()
-serial.init()
-
-init_board()
-
-uart = uart_handler()
-uart.init()
+protocol = Protocol()
 
 # Main LOOP WOOOOOO
 while (True):
-    data = serial.read_line()
-    if (data is not None):
-        frame = sensor.snapshot()
-        serial.send("pic\r\n")
+    frame = save_image()
+    frame.save("small_picture.jpg")
+    try:
+        command = protocol.command()
+        if command == Protocol.CAPTURE:
+            print(command)
+            frame = save_image().bytearray()
+            protocol.send(frame)
+        if command == Protocol.STOP:
+            break
+    except OSError as e:
+        print(str(e))
 
-print("DONE!!")
+m.close(1)
