@@ -17,7 +17,7 @@ class uart_handler():
         self.uart.write("start up\n")
         time.sleep_ms(80)
 
-    def send(self, data):
+    def write(self, data):
         self.uart.write(data)
 
     def read_line(self):
@@ -37,9 +37,19 @@ class Protocol():
     def __init__(self):
         self.uart = uart_handler()
         self.uart.init()
+        self.image_compressed = None
 
-    def send(self, image):
-        self.uart.send(image)
+    def write(self, image, start_byte=0):
+        self.image_compressed = image.compress(quality=80)
+        image_size = len(self.image_compressed)
+        self.uart.write(image)
+
+        if start_byte > image_size:
+            start_byte = image_size
+
+        self.uart.write(bytes([0x76, 0x00, 0x32, 0x00, 0x00, 0xFF, 0xD8]))
+        self.uart.write(image_compressed[start_byte:])
+        self.uart.write(bytes([0xFF, 0xD9, 0x76, 0x00, 0x32, 0x00, 0x00,]))
 
     def command(self):
         cmd = self.uart.read_line()
@@ -81,14 +91,6 @@ def init_board():
     sensor.skip_frames(time=2000)
 
 
-def save_image():
-    frame = sensor.snapshot()
-    print(m.width())
-    m.add_frame(frame)
-    frame.scale(x_size=640, y_size=480)
-    return frame
-
-
 init_board()
 clock = time.clock()
 m = mjpeg.Mjpeg("movie.mjpeg")
@@ -102,14 +104,13 @@ protocol = Protocol()
 
 # Main LOOP WOOOOOO
 while (True):
-    frame = save_image()
-    frame.save("small_picture.jpg")
     try:
         command = protocol.command()
         if command == Protocol.CAPTURE:
-            print(command)
-            frame = save_image().bytearray()
-            protocol.send(frame)
+            frame = sensor.snapshot()
+            m.add_frame(frame)
+            small_image = frame.scale(x_size=640, y_size=480)
+            protocol.send(small_image)
         if command == Protocol.STOP:
             break
     except OSError as e:
