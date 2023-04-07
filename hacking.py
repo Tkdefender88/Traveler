@@ -2,13 +2,14 @@
 
 import sensor
 import mjpeg
+import time
 from pyb import UART, RTC
 
 
 class Protocol():
 
     def __init__(self):
-        self.uart = UART(3, 115200, timeout=5000, timeout_char=1000)
+        self.uart = UART(3, 115200, timeout=5000, timeout_char=500)
         self.uart.write("start up\n")
         self.start_byte = 0
         self.length_to_read = -1
@@ -18,21 +19,14 @@ class Protocol():
         date_time = self.rtc.datetime()
         print(date_time)
         self.mjpeg = mjpeg.Mjpeg(
-                "{:04}-{:02}-{:02}-{:02}-{:02}-{:02}.mjpeg".format(
-                    date_time[0],
-                    date_time[1],
-                    date_time[2],
-                    date_time[4],
-                    date_time[5],
-                    date_time[6]
-                )
+                "{:02}-{:02}.mjpeg".format(date_time[5], date_time[6])
             )
 
     def is_running(self):
         return self.running
 
     def send_photo(self, image):
-        compressed_image = image.compress(quality=80)
+        compressed_image = image.compress(quality=50)
         image_size = compressed_image.size()
         print(image_size)
 
@@ -101,11 +95,33 @@ class Protocol():
         self.mjpeg.add_frame(image)
         image.scale(x_size=640, y_size=480)
 
+    def capture_video(self):
+        clock = time.clock()
+        watch_dog = 0
+        while (watch_dog < 200):
+            frame = sensor.snapshot()
+            clock.tick()
+            self.mjpeg.add_frame(frame)
+            if self.uart.any():
+                line = self.uart.readline()
+                if line == [0x5A, 0x0A]:
+                    self.uart.write(bytes([0x76, 0x00, 0x5A]))
+                    watch_dog = 0
+            else:
+                watch_dog += 1
+
+        print(clock.fps())
+        self.mjpeg.close(clock.fps())
+
     def cmd_image(self, cmd):
         if cmd[0] == 0x00:
             self.uart.write(bytes([0x76, 0x00, 0x36, 0x00, 0x00]))
             self.capture_image()
             return
+
+        if cmd[0] == 0x01:
+            self.uart.write(bytes([0x76, 0x00, 0x36, 0x00, 0x01]))
+            self.capture_video()
 
         if cmd[0] == 0x03:
             self.uart.write(bytes([0x76, 0x00, 0x36, 0x00, 0x00]))
@@ -116,6 +132,7 @@ class Protocol():
 
     def close(self):
         self.mjpeg.close(1)
+        self.uart.deinit()
         self.running = False
 
 
@@ -134,6 +151,7 @@ def testing():
             # p     p     x     x     p     p     y     y     p     p
             [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A]
         )
+        protocol.capture_video()
         protocol.close()
     except OSError as e:
         print(str(e))
@@ -143,7 +161,7 @@ init_board()
 
 protocol = Protocol()
 
-# testing()
+testing()
 # Main LOOP WOOOOOO
 '''
 while (protocol.is_running()):
