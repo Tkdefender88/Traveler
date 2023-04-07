@@ -1,18 +1,11 @@
 # hacking prototype - By: justin - Fri Mar 10 2023
 
 import sensor
-import time
-import ustruct
 import mjpeg
 from pyb import UART, RTC
 
 
 class Protocol():
-    RESET = 0
-    CAPTURE = 1
-    READ_DATA_LENGTH = 2
-    READ_DATA_IMAGE = 3
-    STOP = 4
 
     def __init__(self):
         self.uart = UART(3, 115200, timeout=5000, timeout_char=1000)
@@ -20,6 +13,7 @@ class Protocol():
         self.start_byte = 0
         self.length_to_read = -1
         self.rtc = RTC()
+        self.running = True
 
         date_time = self.rtc.datetime()
         print(date_time)
@@ -33,6 +27,9 @@ class Protocol():
                     date_time[6]
                 )
             )
+
+    def is_running(self):
+        return self.running
 
     def send_photo(self, image):
         compressed_image = image.compress(quality=80)
@@ -65,7 +62,7 @@ class Protocol():
             )
 
     def command(self):
-        cmd = self.uart.read_line()
+        cmd = self.uart.readline()
         if cmd is not None:
             if cmd[0] != 0x56:
                 raise OSError("command corrupted")
@@ -75,23 +72,20 @@ class Protocol():
 
     def process_cmd(self, cmd):
         if cmd[0] == 0x36 and cmd[1] == 0x01:
-            return self.cmd_image(cmd[2:])
-        if cmd[0] == 0x26 and cmd[1] == 0x00:
-            self.uart.send(
-                ustruct.pack("<bbbb", 0x76, 0x00, 0x26, 0x00)
-            )
-            return (Protocol.RESET)
-        if cmd[0] == 0x34 and cmd[1] == 0x01 and cmd[2] == 0x00:
-            return self.send_photo_length()
-        if cmd[0] == 0x32 and cmd[1] == 0x0C:
-            return self.command_read_image_data(cmd[2:])
+            self.cmd_image(cmd[2:])
+        elif cmd[0] == 0x26 and cmd[1] == 0x00:
+            self.uart.write(bytes([0x76, 0x00, 0x26, 0x00]))
+        elif cmd[0] == 0x34 and cmd[1] == 0x01 and cmd[2] == 0x00:
+            self.send_photo_length()
+        elif cmd[0] == 0x32 and cmd[1] == 0x0C:
+            self.command_read_image_data(cmd[2:])
 
         raise OSError("command corrupted")
 
     def command_read_image_data(self, cmd):
-        if len(cmd) < 11:
+        if len(cmd) < 9:
             raise OSError("command corrupted")
-        if cmd[:4] != [0x00, 0x0A, 0x00, 0x00]:
+        if cmd[:2] != [0x00, 0x00]:
             raise OSError("command corrupted")
 
         self.start_byte = cmd[4] << 8 | cmd[5]
@@ -101,7 +95,6 @@ class Protocol():
             self.length_to_read = -1
 
         self.send_photo(sensor.get_fb())
-        return Protocol.READ_DATA_IMAGE
 
     def capture_image(self):
         image = sensor.snapshot()
@@ -112,17 +105,18 @@ class Protocol():
         if cmd[0] == 0x00:
             self.uart.write(bytes([0x76, 0x00, 0x36, 0x00, 0x00]))
             self.capture_image()
-            return (Protocol.CAPTURE)
+            return
 
         if cmd[0] == 0x03:
             self.uart.write(bytes([0x76, 0x00, 0x36, 0x00, 0x00]))
             self.close()
-            return (Protocol.STOP)
+            return
 
         raise OSError("command corrupted")
 
     def close(self):
         self.mjpeg.close(1)
+        self.running = False
 
 
 def init_board():
@@ -137,30 +131,24 @@ def testing():
         protocol.capture_image()
         protocol.send_photo_length()
         protocol.command_read_image_data(
-            # p      p     p    p      x    x     p     y     y     p      p
-            [0x00, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A]
+            # p     p     x     x     p     p     y     y     p     p
+            [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A]
         )
+        protocol.close()
     except OSError as e:
         print(str(e))
 
 
 init_board()
-m = mjpeg.Mjpeg("movie.mjpeg")
+
 protocol = Protocol()
 
-testing()
+# testing()
 # Main LOOP WOOOOOO
 '''
-while (True):
+while (protocol.is_running()):
     try:
-        command = protocol.command()
-        if command == Protocol.CAPTURE:
-            frame = sensor.snapshot()
-            m.add_frame(frame)
-            small_image = frame.scale(x_size=640, y_size=480)
-            protocol.send(small_image)
-        if command == Protocol.STOP:
-            break
+        protocol.command()
     except OSError as e:
         print(str(e))
 '''
