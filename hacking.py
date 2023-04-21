@@ -59,28 +59,36 @@ class Protocol():
         cmd = self.uart.readline()
         if cmd is not None:
             if cmd[0] != 0x56:
-                raise OSError("command corrupted")
+                print(cmd)
+                raise OSError("command corrupted first byte not 0x56")
             if cmd[1] != 0x00:
-                raise OSError("command corrupted")
+                print(cmd)
+                raise OSError("command corrupted second byte not 0x00")
             return self.process_cmd(cmd[2:])
 
     def process_cmd(self, cmd):
+        print(*cmd[0:2])
         if cmd[0] == 0x36 and cmd[1] == 0x01:
             self.cmd_image(cmd[2:])
-        elif cmd[0] == 0x26 and cmd[1] == 0x00:
-            self.uart.write(bytes([0x76, 0x00, 0x26, 0x00]))
         elif cmd[0] == 0x34 and cmd[1] == 0x01 and cmd[2] == 0x00:
             self.send_photo_length()
         elif cmd[0] == 0x32 and cmd[1] == 0x0C:
             self.command_read_image_data(cmd[2:])
-
-        raise OSError("command corrupted")
+        else:
+            print(*cmd)
+            raise OSError("command corrupted did not recognize command prefix")
 
     def command_read_image_data(self, cmd):
         if len(cmd) < 9:
-            raise OSError("command corrupted")
+            print(cmd)
+            raise OSError(
+                "command corrupted - command length too short for image data"
+            )
         if cmd[:2] != [0x00, 0x00]:
-            raise OSError("command corrupted")
+            print(cmd)
+            raise OSError(
+                "command corrupted - image data request protocol failed"
+            )
 
         self.start_byte = cmd[4] << 8 | cmd[5]
         self.length_to_read = cmd[8] << 8 | cmd[9]
@@ -96,6 +104,7 @@ class Protocol():
         image.scale(x_size=640, y_size=480)
 
     def capture_video(self):
+        print("capturing video")
         clock = time.clock()
         watch_dog = 0
         while (watch_dog < 200):
@@ -104,9 +113,13 @@ class Protocol():
             self.mjpeg.add_frame(frame)
             if self.uart.any():
                 line = self.uart.readline()
-                if line == [0x5A, 0x0A]:
+                print([hex(x) for x in line])
+                print(line == bytes([0x56, 0x00, 0x5A, 0x0A]))
+                if line == bytes([0x56, 0x00, 0x5A, 0x0A]):
+                    print("respond")
                     self.uart.write(bytes([0x76, 0x00, 0x5A]))
                     watch_dog = 0
+                    # self.mjpeg.sync(clock.fps())
             else:
                 watch_dog += 1
 
@@ -122,13 +135,14 @@ class Protocol():
         if cmd[0] == 0x01:
             self.uart.write(bytes([0x76, 0x00, 0x36, 0x00, 0x01]))
             self.capture_video()
+            return
 
         if cmd[0] == 0x03:
             self.uart.write(bytes([0x76, 0x00, 0x36, 0x00, 0x00]))
             self.close()
             return
 
-        raise OSError("command corrupted")
+        raise OSError("command corrupted -- did not recognize image command")
 
     def close(self):
         self.mjpeg.close(1)
@@ -161,12 +175,11 @@ init_board()
 
 protocol = Protocol()
 
-testing()
+# testing()
 # Main LOOP WOOOOOO
-'''
+
 while (protocol.is_running()):
     try:
         protocol.command()
     except OSError as e:
         print(str(e))
-'''
