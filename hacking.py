@@ -9,7 +9,7 @@ from pyb import UART, RTC
 class Protocol():
 
     def __init__(self):
-        self.uart = UART(3, 115200, timeout=5000, timeout_char=500)
+        self.uart = UART(3, 115200, timeout=500, timeout_char=500)
         self.uart.write("start up\n")
         self.start_byte = 0
         self.length_to_read = -1
@@ -28,7 +28,6 @@ class Protocol():
     def send_photo(self, image):
         compressed_image = image.compress(quality=50)
         image_size = compressed_image.size()
-        print(image_size)
 
         if self.start_byte > image_size:
             self.start_byte = image_size
@@ -44,7 +43,7 @@ class Protocol():
 
     def send_photo_length(self):
         image_size = sensor.get_fb().compress(quality=80).size()
-        print(image_size)
+        print("image size " + str(image_size))
         self.uart.write(bytes([0x76, 0x00, 0x34, 0x00, 0x04, 0x00, 0x00]))
         self.uart.write(
                 bytes(
@@ -56,18 +55,18 @@ class Protocol():
             )
 
     def command(self):
-        cmd = self.uart.readline()
+        cmd = self.uart.read()
         if cmd is not None:
+            print("Command received")
+            print([hex(x) for x in cmd])
             if cmd[0] != 0x56:
-                print(cmd)
                 raise OSError("command corrupted first byte not 0x56")
             if cmd[1] != 0x00:
-                print(cmd)
                 raise OSError("command corrupted second byte not 0x00")
             return self.process_cmd(cmd[2:])
 
     def process_cmd(self, cmd):
-        print(*cmd[0:2])
+        print([hex(x) for x in cmd])
         if cmd[0] == 0x36 and cmd[1] == 0x01:
             self.cmd_image(cmd[2:])
         elif cmd[0] == 0x34 and cmd[1] == 0x01 and cmd[2] == 0x00:
@@ -75,21 +74,16 @@ class Protocol():
         elif cmd[0] == 0x32 and cmd[1] == 0x0C:
             self.command_read_image_data(cmd[2:])
         else:
-            print(*cmd)
+            print([hex(x) for x in cmd])
             raise OSError("command corrupted did not recognize command prefix")
 
     def command_read_image_data(self, cmd):
+        # print([hex(x) for x in cmd])
         if len(cmd) < 9:
             print(cmd)
             raise OSError(
                 "command corrupted - command length too short for image data"
             )
-        if cmd[:2] != [0x00, 0x00]:
-            print(cmd)
-            raise OSError(
-                "command corrupted - image data request protocol failed"
-            )
-
         self.start_byte = cmd[4] << 8 | cmd[5]
         self.length_to_read = cmd[8] << 8 | cmd[9]
 
@@ -119,7 +113,7 @@ class Protocol():
                     print("respond")
                     self.uart.write(bytes([0x76, 0x00, 0x5A]))
                     watch_dog = 0
-                    # self.mjpeg.sync(clock.fps())
+                    self.mjpeg.sync(clock.fps())
             else:
                 watch_dog += 1
 
