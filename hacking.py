@@ -3,24 +3,20 @@
 import sensor
 import mjpeg
 import time
-from pyb import UART, RTC
+from pyb import UART
 
 
 class Protocol():
 
     def __init__(self):
-        self.uart = UART(3, 115200, timeout=500, timeout_char=500)
+        self.uart = UART(3, 115200, timeout=150, timeout_char=150)
         self.uart.write("start up\n")
         self.start_byte = 0
         self.length_to_read = -1
-        self.rtc = RTC()
         self.running = True
+        self.file_count = 0
 
-        date_time = self.rtc.datetime()
-        print(date_time)
-        self.mjpeg = mjpeg.Mjpeg(
-                "{:02}-{:02}.mjpeg".format(date_time[5], date_time[6])
-            )
+        self.open_new_mjpeg()
 
     def is_running(self):
         return self.running
@@ -66,7 +62,6 @@ class Protocol():
             return self.process_cmd(cmd[2:])
 
     def process_cmd(self, cmd):
-        print([hex(x) for x in cmd])
         if cmd[0] == 0x36 and cmd[1] == 0x01:
             self.cmd_image(cmd[2:])
         elif cmd[0] == 0x34 and cmd[1] == 0x01 and cmd[2] == 0x00:
@@ -78,7 +73,6 @@ class Protocol():
             raise OSError("command corrupted did not recognize command prefix")
 
     def command_read_image_data(self, cmd):
-        # print([hex(x) for x in cmd])
         if len(cmd) < 9:
             print(cmd)
             raise OSError(
@@ -97,10 +91,16 @@ class Protocol():
         self.mjpeg.add_frame(image)
         image.scale(x_size=640, y_size=480)
 
+    def open_new_mjpeg(self):
+        if self.mjpeg.is_closed():
+            self.mjpeg = mjpeg.Mjpeg("video" + str(self.file_count) + ".mjpeg")
+            self.file_count += 1
+
     def capture_video(self):
-        print("capturing video")
         clock = time.clock()
         watch_dog = 0
+        if self.mjpeg.is_closed():
+            self.open_new_mjpeg()
         while (watch_dog < 200):
             frame = sensor.snapshot()
             clock.tick()
@@ -108,8 +108,8 @@ class Protocol():
             if self.uart.any():
                 line = self.uart.readline()
                 print([hex(x) for x in line])
-                print(line == bytes([0x56, 0x00, 0x5A, 0x0A]))
-                if line == bytes([0x56, 0x00, 0x5A, 0x0A]):
+                print(line == bytes([0x56, 0x00, 0x5A]))
+                if line == bytes([0x56, 0x00, 0x5A]):
                     print("respond")
                     self.uart.write(bytes([0x76, 0x00, 0x5A]))
                     watch_dog = 0
@@ -123,16 +123,19 @@ class Protocol():
     def cmd_image(self, cmd):
         if cmd[0] == 0x00:
             self.uart.write(bytes([0x76, 0x00, 0x36, 0x00, 0x00]))
+            print('capture image')
             self.capture_image()
             return
 
         if cmd[0] == 0x01:
             self.uart.write(bytes([0x76, 0x00, 0x36, 0x00, 0x01]))
+            print('capture video')
             self.capture_video()
             return
 
         if cmd[0] == 0x03:
             self.uart.write(bytes([0x76, 0x00, 0x36, 0x00, 0x00]))
+            print('close')
             self.close()
             return
 
