@@ -13,6 +13,7 @@ class Protocol():
     IMAGE_COMPRESSION_QUALITY = 50
 
     def __init__(self):
+        self.setup_sensor(sensor.RGB565)
         self.uart = UART(3, 115200, timeout=150, timeout_char=150)
         self.uart.write("start up\n")
         self.resolution = Protocol.VGA
@@ -26,6 +27,12 @@ class Protocol():
             print(str(e))
 
         # self.open_new_mjpeg()
+
+    def setup_sensor(self, mode):
+        sensor.reset()
+        sensor.set_pixformat(mode)
+        sensor.set_framesize(sensor.FHD)
+        sensor.skip_frames(time=2000)
 
     def is_running(self):
         return self.running
@@ -81,9 +88,17 @@ class Protocol():
             self.command_read_image_data(cmd[2:])
         elif cmd[0] == 0x31 and cmd[1] == 0x05:
             self.set_image_resolution(cmd[2:])
+        elif cmd[0] == 0x30 and cmd[1] == 0x04:
+            self.set_sensor_mode(cmd[2:])
         else:
             print([hex(x) for x in cmd])
             raise OSError("command corrupted did not recognize command prefix")
+
+    def set_sensor_mode(self, cmd):
+        if cmd[0] == 0:
+            self.setup_sensor(sensor.RGB565)
+        elif cmd[0] == 1:
+            self.setup_sensor(sensor.GRAYSCALE)
 
     def command_read_image_data(self, cmd):
         if len(cmd) < 9:
@@ -169,29 +184,20 @@ class Protocol():
         self.running = False
 
 
-def init_board():
-    sensor.reset()
-    sensor.set_pixformat(sensor.RGB565)
-    sensor.set_framesize(sensor.FHD)
-    sensor.skip_frames(time=2000)
-
-
-init_board()
-
 protocol = Protocol()
 
 
 def testing():
     try:
+        protocol.setup_sensor(sensor.RGB565)
+
         protocol.capture_image()
-        protocol.send_photo_length()
-        protocol.command_read_image_data(
-            # p     p     x     x     p     p     y     y     p     p
-            [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A]
-        )
-        protocol.capture_video()
+
+        protocol.setup_sensor(sensor.GRAYSCALE)
+
+        protocol.capture_image()
+
         protocol.close()
-        print("foo")
     except OSError as e:
         print(str(e))
     except TypeError as e:
