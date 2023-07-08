@@ -6,17 +6,94 @@ import time
 from pyb import UART
 
 
-class Protocol():
+class CameraHandler():
     VGA = 0
     QVGA = 1
     QQVGA = 2
     IMAGE_COMPRESSION_QUALITY = 50
 
     def __init__(self):
-        self.setup_sensor(sensor.RGB565)
+        self.resolution = CameraHandler.VGA
+        pass
+
+    def setup_sensor(self, mode):
+        sensor.reset()
+        sensor.set_pixformat(mode)
+        sensor.set_framesize(sensor.FHD)
+        sensor.skip_frames(time=2000)
+
+    def set_sensor_mode(self, cmd):
+        if cmd[0] == 0:
+            self.setup_sensor(sensor.RGB565)
+        elif cmd[0] == 1:
+            self.setup_sensor(sensor.GRAYSCALE)
+
+    def set_image_resolution(self, cmd):
+        if cmd[0] == 0x00:
+            self.resolution = CameraHandler.VGA
+        elif cmd[0] == 0x11:
+            self.resolution = CameraHandler.QVGA
+        elif cmd[0] == 0x22:
+            self.resolution = CameraHandler.QQVGA
+        else:
+            raise OSError("command for resolution not recognized")
+
+    def capture_image(self):
+        image = sensor.snapshot()
+        self.mjpeg.add_frame(image)
+        if self.resolution == Protocol.VGA:
+            image.scale(x_size=640, y_size=480)
+        elif self.resolution == Protocol.QVGA:
+            image.scale(x_size=320, y_size=240)
+        elif self.resolution == Protocol.QQVGA:
+            image.scale(x_size=160, y_size=120)
+
+    def capture_video(self):
+        clock = time.clock()
+        watch_dog = 0
+        if self.mjpeg.is_closed():
+            self.open_new_mjpeg()
+        while (watch_dog < 200):
+            frame = sensor.snapshot()
+            clock.tick()
+            self.mjpeg.add_frame(frame)
+            if self.uart.any():
+                line = self.uart.readline()
+                if line == bytes([0x56, 0x00, 0x5A]):
+                    self.uart.write(bytes([0x76, 0x00, 0x5A]))
+                    watch_dog = 0
+                    self.mjpeg.sync(clock.fps())
+            else:
+                watch_dog += 1
+
+        self.mjpeg.close(clock.fps())
+
+    def close(self):
+        self.mjpeg.close(1)
+        self.uart.deinit()
+        self.running = False
+
+
+class CommandProcessor():
+    def __init__(self):
+        self.current_state = 'start'
+        self.fsm = {
+            ('start', 0x56): (lambda _: 0x56),
+            (0x56, 0x00): (lambda _: 'cmd'),
+        }
+        pass
+
+    def process_command(self, cmd):
+        pass
+
+
+class Protocol():
+    def __init__(self, camera_handler, command_processor):
+        self.command_processor = command_processor
+        self.camera_handler = camera_handler
+
         self.uart = UART(3, 115200, timeout=150, timeout_char=150)
         self.uart.write("start up\n")
-        self.resolution = Protocol.VGA
         self.start_byte = 0
         self.length_to_read = -1
         self.running = True
@@ -27,12 +104,6 @@ class Protocol():
             print(str(e))
 
         # self.open_new_mjpeg()
-
-    def setup_sensor(self, mode):
-        sensor.reset()
-        sensor.set_pixformat(mode)
-        sensor.set_framesize(sensor.FHD)
-        sensor.skip_frames(time=2000)
 
     def is_running(self):
         return self.running
@@ -94,12 +165,6 @@ class Protocol():
             print([hex(x) for x in cmd])
             raise OSError("command corrupted did not recognize command prefix")
 
-    def set_sensor_mode(self, cmd):
-        if cmd[0] == 0:
-            self.setup_sensor(sensor.RGB565)
-        elif cmd[0] == 1:
-            self.setup_sensor(sensor.GRAYSCALE)
-
     def command_read_image_data(self, cmd):
         if len(cmd) < 9:
             raise OSError(
@@ -113,52 +178,12 @@ class Protocol():
 
         self.send_photo(sensor.get_fb())
 
-    def set_image_resolution(self, cmd):
-        if cmd[0] == 0x00:
-            self.resolution = Protocol.VGA
-        elif cmd[0] == 0x11:
-            self.resolution = Protocol.QVGA
-        elif cmd[0] == 0x22:
-            self.resolution = Protocol.QQVGA
-        else:
-            raise OSError("command for resolution not recognized")
-
-    def capture_image(self):
-        image = sensor.snapshot()
-        self.mjpeg.add_frame(image)
-        if self.resolution == Protocol.VGA:
-            image.scale(x_size=640, y_size=480)
-        elif self.resolution == Protocol.QVGA:
-            image.scale(x_size=320, y_size=240)
-        elif self.resolution == Protocol.QQVGA:
-            image.scale(x_size=160, y_size=120)
-
     '''
     def open_new_mjpeg(self):
         if self.mjpeg is None or self.mjpeg.is_closed():
             self.mjpeg = mjpeg.Mjpeg("video" + str(self.file_count) + ".mjpeg")
             self.file_count += 1
     '''
-
-    def capture_video(self):
-        clock = time.clock()
-        watch_dog = 0
-        if self.mjpeg.is_closed():
-            self.open_new_mjpeg()
-        while (watch_dog < 200):
-            frame = sensor.snapshot()
-            clock.tick()
-            self.mjpeg.add_frame(frame)
-            if self.uart.any():
-                line = self.uart.readline()
-                if line == bytes([0x56, 0x00, 0x5A]):
-                    self.uart.write(bytes([0x76, 0x00, 0x5A]))
-                    watch_dog = 0
-                    self.mjpeg.sync(clock.fps())
-            else:
-                watch_dog += 1
-
-        self.mjpeg.close(clock.fps())
 
     def cmd_image(self, cmd):
         if cmd[0] == 0x00:
@@ -177,11 +202,6 @@ class Protocol():
             return
 
         raise OSError("command corrupted -- did not recognize image command")
-
-    def close(self):
-        self.mjpeg.close(1)
-        self.uart.deinit()
-        self.running = False
 
 
 protocol = Protocol()
