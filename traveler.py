@@ -13,8 +13,8 @@ class CameraHandler():
     IMAGE_COMPRESSION_QUALITY = 50
 
     def __init__(self):
-        self.resolution = CameraHandler.VGA
-        pass
+        self.set_image_resolution(CameraHandler.VGA)
+        self.setup_sensor(sensor.RGB565)
 
     def setup_sensor(self, mode):
         sensor.reset()
@@ -22,21 +22,23 @@ class CameraHandler():
         sensor.set_framesize(sensor.FHD)
         sensor.skip_frames(time=2000)
 
+    def set_image_resolution(self, resolution):
+        if resolution in [
+            CameraHandler.VGA,
+            CameraHandler.QVGA,
+            CameraHandler.QQVGA
+        ]:
+            self.resolution = resolution
+        else:
+            raise OSError("resolution not recognized")
+
+
+'''
     def set_sensor_mode(self, cmd):
         if cmd[0] == 0:
             self.setup_sensor(sensor.RGB565)
         elif cmd[0] == 1:
             self.setup_sensor(sensor.GRAYSCALE)
-
-    def set_image_resolution(self, cmd):
-        if cmd[0] == 0x00:
-            self.resolution = CameraHandler.VGA
-        elif cmd[0] == 0x11:
-            self.resolution = CameraHandler.QVGA
-        elif cmd[0] == 0x22:
-            self.resolution = CameraHandler.QQVGA
-        else:
-            raise OSError("command for resolution not recognized")
 
     def capture_image(self):
         image = sensor.snapshot()
@@ -72,21 +74,87 @@ class CameraHandler():
         self.mjpeg.close(1)
         self.uart.deinit()
         self.running = False
+'''
 
 
 class CommandProcessor():
-    def __init__(self):
+    def __init__(self, cameraHandler: CameraHandler):
+        self.camera_handler = cameraHandler
         self.current_state = 'start'
         self.fsm = {
-            ('start', 0x56): (lambda _: 0x56),
-            (0x56, 0x00): (lambda _: 'cmd'),
+            ('start',   (0x56, 0x00)): (lambda _: 'command'),
+            ('command', (0x26, 0x00)): self.reset,
+            ('command', (0x36, 0x01)): (lambda _: 'capture'),
+            ('command', (0x34, 0x01)): self.tx_data_len,
+            ('command', (0x32, 0x0C)): self.tx_image_data,
+            ('command', (0x31, 0x05)): self.set_resolution,
+            ('command', (0x30, 0x04)): self.set_color_mode,
+            ('command', (0x29, 0x05)): self.set_rtc,
+            ('capture', (0x00, 0x05)): self.capture_image,
+            ('capture', (0x00, 0x0C)): self.capture_video
         }
+
+    def process_command(self, cmd: list[int], state: str = 'start') -> str:
+        """ recursive """
+        token = tuple(cmd[0:2])
+        print(token)
+        try:
+            print((state, token))
+            fn = self.fsm[(state, token)]
+            state = fn(cmd[2:])
+
+            # base case
+            if state is None:
+                return ''
+
+            self.process_command(cmd[2:], state)
+        except KeyError:
+            return 'Invalid State'
+
+    def reset(self, cmd):
         pass
 
-    def process_command(self, cmd):
-        pass
+    def tx_data_len(self, cmd: list[int]) -> str:
+        return 'end'
+
+    def tx_image_data(self, cmd):
+        start_address = (cmd[4] << 8) + cmd[5]
+        data_length = (cmd[8] << 8) + cmd[9]
+        print(cmd)
+        print(start_address)
+        print(data_length)
+
+    def set_resolution(self, cmd):
+        print(cmd)
+        resolution = 0
+        if cmd[0] == 0x00:
+            resolution = CameraHandler.VGA
+        elif cmd[0] == 0x11:
+            resolution = CameraHandler.QVGA
+        elif cmd[0] == 0x22:
+            resolution = CameraHandler.QQVGA
+
+        self.camera_handler.set_image_resolution(resolution)
+
+    def set_color_mode(self, cmd):
+        print(cmd)
+        mode = sensor.RGB565
+        if cmd[0] == 0x01:
+            mode = sensor.GRAYSCALE
+
+        self.camera_handler.setup_sensor(mode)
+
+    def set_rtc(self, cmd):
+        return 'end'
+
+    def capture_image(self, cmd):
+        return 'end'
+
+    def capture_video(self, cmd):
+        return 'end'
 
 
+'''
 class Protocol():
     def __init__(self, camera_handler, command_processor):
         self.command_processor = command_processor
@@ -178,12 +246,10 @@ class Protocol():
 
         self.send_photo(sensor.get_fb())
 
-    '''
     def open_new_mjpeg(self):
         if self.mjpeg is None or self.mjpeg.is_closed():
             self.mjpeg = mjpeg.Mjpeg("video" + str(self.file_count) + ".mjpeg")
             self.file_count += 1
-    '''
 
     def cmd_image(self, cmd):
         if cmd[0] == 0x00:
@@ -202,29 +268,35 @@ class Protocol():
             return
 
         raise OSError("command corrupted -- did not recognize image command")
+'''
 
+# protocol = Protocol()
 
-protocol = Protocol()
+cameraHandler = CameraHandler()
+
+commandProcessor = CommandProcessor(cameraHandler)
 
 
 def testing():
-    try:
-        protocol.setup_sensor(sensor.RGB565)
+    '''
+    cmd = [0x56, 0x00, 0x26, 0x00]
+    commandProcessor.process_command(cmd)
 
-        protocol.capture_image()
+    cmd = [0x56, 0x00, 0x32, 0x0C, 0x00, 0x0A, 0x00, 0x00, 0x12, 0x34, 0x00, 0x00, 0x56, 0x78, 0x00, 0x0A]
+    commandProcessor.process_command(cmd)
+    '''
 
-        protocol.setup_sensor(sensor.GRAYSCALE)
+    # set color mode
+    cmd = [0x56, 0x00, 0x30, 0x04, 0x00]
+    commandProcessor.process_command(cmd)
 
-        protocol.capture_image()
-
-        protocol.close()
-    except OSError as e:
-        print(str(e))
-    except TypeError as e:
-        print(str(e))
+    # capture image
+    cmd = [0x56, 0x00, 0x36, 0x01, 0x00, 0x05]
+    commandProcessor.process_command(cmd)
 
 
 testing()
+
 # Main LOOP WOOOOOO
 '''
 while (protocol.is_running()):
