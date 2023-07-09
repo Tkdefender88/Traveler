@@ -32,6 +32,25 @@ class CameraHandler():
         else:
             raise OSError("resolution not recognized")
 
+    def capture_image(self):
+        image = sensor.snapshot()
+        self.mjpeg.add_frame(image)
+        self.__scale_image(image)
+
+    def __scale_image(self, image):
+        if self.resolution == CameraHandler.VGA:
+            image.scale(x_size=640, y_size=480)
+        elif self.resolution == CameraHandler.QVGA:
+            image.scale(x_size=320, y_size=240)
+        elif self.resolution == CameraHandler.QQVGA:
+            image.scale(x_size=160, y_size=120)
+
+    def compress_frame_buffer(self):
+        image = sensor.get_fb().compress(
+            quality=CameraHandler.IMAGE_COMPRESSION_QUALITY
+        )
+        return image
+
 
 '''
     def set_sensor_mode(self, cmd):
@@ -39,16 +58,6 @@ class CameraHandler():
             self.setup_sensor(sensor.RGB565)
         elif cmd[0] == 1:
             self.setup_sensor(sensor.GRAYSCALE)
-
-    def capture_image(self):
-        image = sensor.snapshot()
-        self.mjpeg.add_frame(image)
-        if self.resolution == Protocol.VGA:
-            image.scale(x_size=640, y_size=480)
-        elif self.resolution == Protocol.QVGA:
-            image.scale(x_size=320, y_size=240)
-        elif self.resolution == Protocol.QQVGA:
-            image.scale(x_size=160, y_size=120)
 
     def capture_video(self):
         clock = time.clock()
@@ -81,6 +90,7 @@ class CommandProcessor():
     def __init__(self, cameraHandler: CameraHandler):
         self.camera_handler = cameraHandler
         self.current_state = 'start'
+        self.uart = self.uart = UART(3, 115200, timeout=150, timeout_char=150)
         self.fsm = {
             ('start',   (0x56, 0x00)): (lambda _: 'command'),
             ('command', (0x26, 0x00)): self.reset,
@@ -118,11 +128,21 @@ class CommandProcessor():
         return 'end'
 
     def tx_image_data(self, cmd):
+        print('tx_image_data')
         start_address = (cmd[4] << 8) + cmd[5]
         data_length = (cmd[8] << 8) + cmd[9]
-        print(cmd)
-        print(start_address)
-        print(data_length)
+        image = self.camera_handler.compress_frame_buffer()
+        image_size = image.size()
+
+        if start_address > image_size:
+            start_address = image_size
+
+        if data_length == 0:
+            data_length = image_size
+
+        self.uart.write(bytes([0x76, 0x00, 0x32, 0x00, 0x00, 0xFF, 0xD8]))
+        self.uart.write(image.bytearray()[start_address:data_length])
+        self.uart.write(bytes([0xFF, 0xD9, 0x76, 0x00, 0x32, 0x00, 0x00,]))
 
     def set_resolution(self, cmd):
         print(cmd)
@@ -282,9 +302,9 @@ def testing():
     cmd = [0x56, 0x00, 0x26, 0x00]
     commandProcessor.process_command(cmd)
 
+    '''
     cmd = [0x56, 0x00, 0x32, 0x0C, 0x00, 0x0A, 0x00, 0x00, 0x12, 0x34, 0x00, 0x00, 0x56, 0x78, 0x00, 0x0A]
     commandProcessor.process_command(cmd)
-    '''
 
     # set color mode
     cmd = [0x56, 0x00, 0x30, 0x04, 0x00]
