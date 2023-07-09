@@ -4,6 +4,7 @@ import sensor
 import mjpeg
 import time
 from pyb import UART
+from pyb import RTC
 
 
 class CameraHandler():
@@ -91,6 +92,7 @@ class CommandProcessor():
         self.camera_handler = cameraHandler
         self.current_state = 'start'
         self.uart = self.uart = UART(3, 115200, timeout=150, timeout_char=150)
+        self.rtc = RTC()
         self.fsm = {
             ('start',   (0x56, 0x00)): (lambda _: 'command'),
             ('command', (0x26, 0x00)): self.reset,
@@ -165,7 +167,20 @@ class CommandProcessor():
         self.camera_handler.setup_sensor(mode)
 
     def set_rtc(self, cmd):
-        return 'end'
+        if len(cmd) < 7:
+            return 'error'
+        date_time = (
+            (cmd[0] << 8) + cmd[1],
+            cmd[2],
+            cmd[3],
+            1,
+            cmd[4],
+            cmd[5],
+            cmd[6],
+            0
+        )
+        print(date_time)
+        self.rtc.datetime(date_time)
 
     def capture_image(self, cmd):
         return 'end'
@@ -312,6 +327,9 @@ def testing():
 
     # capture image
     cmd = [0x56, 0x00, 0x36, 0x01, 0x00, 0x05]
+    commandProcessor.process_command(cmd)
+
+    cmd = [0x56, 0x00, 0x29, 0x05, 0x07, 0xE7, 0x07, 0x08, 0x12, 0x1F, 0x00]
     commandProcessor.process_command(cmd)
 
 
