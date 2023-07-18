@@ -5,6 +5,11 @@ import mjpeg
 import time
 from pyb import UART
 from pyb import RTC
+import os
+import uasyncio
+
+
+rtc = RTC()
 
 
 class CameraHandler():
@@ -35,7 +40,30 @@ class CameraHandler():
 
     def capture_image(self):
         image = sensor.snapshot()
-        self.mjpeg.add_frame(image)
+        now = rtc.datetime()
+        folder = "{year}-{month}-{day}".format(
+            year=now[0],
+            month=now[1],
+            day=now[2],
+        )
+        try:
+            os.stat(folder)
+        except OSError:
+            os.mkdir(folder)
+        finally:
+            os.chdir(folder)
+
+        filename = "{hour}-{minute}-{second}-{subsecond}.jpeg".format(
+             hour=now[4],
+             minute=now[5],
+             second=now[6],
+             subsecond=now[7]
+        )
+
+        print(filename)
+
+        image.save(filename)
+        os.chdir('..')
         self.__scale_image(image)
 
     def __scale_image(self, image):
@@ -51,6 +79,46 @@ class CameraHandler():
             quality=CameraHandler.IMAGE_COMPRESSION_QUALITY
         )
         return image
+
+    async def begin_video_capture(self):
+        clock = time.clock()
+
+        now = rtc.datetime()
+
+        folder = "{year}-{month}-{day}".format(
+            year=now[0],
+            month=now[1],
+            day=now[2],
+        )
+
+        try:
+            os.stat(folder)
+        except OSError:
+            os.mkdir(folder)
+        finally:
+            os.chdir(folder)
+
+        file_name = "{hour}-{minute}-{second}.mjpeg".format(
+            hour=now[4],
+            minute=now[5],
+            second=now[6]
+        )
+        print(file_name)
+        video_buffer = mjpeg.Mjpeg(file_name)
+
+        try:
+            for i in range(20):
+                clock.tick()
+                frame = sensor.snapshot()
+                video_buffer.add_frame(frame)
+                print(clock.fps())
+        except uasyncio.CancelledError:
+            print("cancel")
+            pass
+        finally:
+            # close the file
+            print("closing")
+            video_buffer.close(clock.fps())
 
 
 '''
@@ -92,7 +160,6 @@ class CommandProcessor():
         self.camera_handler = cameraHandler
         self.current_state = 'start'
         self.uart = self.uart = UART(3, 115200, timeout=150, timeout_char=150)
-        self.rtc = RTC()
         self.fsm = {
             ('start',   (0x56, 0x00)): (lambda _: 'command'),
             ('command', (0x26, 0x00)): self.reset,
@@ -180,13 +247,22 @@ class CommandProcessor():
             0
         )
         print(date_time)
-        self.rtc.datetime(date_time)
+        rtc.datetime(date_time)
 
     def capture_image(self, cmd):
-        return 'end'
+        self.camera_handler.capture_image()
 
     def capture_video(self, cmd):
-        return 'end'
+        uasyncio.run(self.video_controller())
+
+    async def video_controller(self):
+        print("create task")
+        record_task = uasyncio.create_task(
+            self.camera_handler.begin_video_capture()
+        )
+        await uasyncio.sleep(2)
+        print("cancelling")
+        record_task.cancel()
 
 
 '''
@@ -318,7 +394,11 @@ def testing():
     commandProcessor.process_command(cmd)
 
     '''
-    cmd = [0x56, 0x00, 0x32, 0x0C, 0x00, 0x0A, 0x00, 0x00, 0x12, 0x34, 0x00, 0x00, 0x56, 0x78, 0x00, 0x0A]
+    cmd = [0x56, 0x00, 0x29, 0x05, 0x07, 0xE7, 0x07, 0x0E, 0x05, 0x02, 0x00]
+    commandProcessor.process_command(cmd)
+
+    cmd = [0x56, 0x00, 0x32, 0x0C, 0x00, 0x0A, 0x00, 0x00,
+           0x12, 0x34, 0x00, 0x00, 0x56, 0x78, 0x00, 0x0A]
     commandProcessor.process_command(cmd)
 
     # set color mode
@@ -329,7 +409,12 @@ def testing():
     cmd = [0x56, 0x00, 0x36, 0x01, 0x00, 0x05]
     commandProcessor.process_command(cmd)
 
-    cmd = [0x56, 0x00, 0x29, 0x05, 0x07, 0xE7, 0x07, 0x08, 0x12, 0x1F, 0x00]
+    # capture image
+    cmd = [0x56, 0x00, 0x36, 0x01, 0x00, 0x05]
+    commandProcessor.process_command(cmd)
+
+    # capture video
+    cmd = [0x56, 0x00, 0x36, 0x01, 0x00, 0x0C]
     commandProcessor.process_command(cmd)
 
 
